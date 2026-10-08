@@ -71,6 +71,28 @@ export const SourceControlRepositoryLookupInput = Schema.Struct({
 });
 export type SourceControlRepositoryLookupInput = typeof SourceControlRepositoryLookupInput.Type;
 
+/** Free text such as `t3`, `owner/` or `owner/name`; each provider maps it to its own search. */
+export const SourceControlRepositorySearchInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  query: TrimmedNonEmptyString,
+  cwd: Schema.optional(TrimmedNonEmptyString),
+});
+export type SourceControlRepositorySearchInput = typeof SourceControlRepositorySearchInput.Type;
+
+export const SourceControlRepositorySearchItem = Schema.Struct({
+  ...SourceControlRepositoryInfo.fields,
+  description: Schema.NullOr(Schema.String),
+  stars: Schema.Number,
+  isPrivate: Schema.Boolean,
+  isFork: Schema.Boolean,
+});
+export type SourceControlRepositorySearchItem = typeof SourceControlRepositorySearchItem.Type;
+
+export const SourceControlRepositorySearchResult = Schema.Struct({
+  repositories: Schema.Array(SourceControlRepositorySearchItem),
+});
+export type SourceControlRepositorySearchResult = typeof SourceControlRepositorySearchResult.Type;
+
 export const SourceControlCloneRepositoryInput = Schema.Struct({
   provider: Schema.optional(SourceControlProviderKind),
   repository: Schema.optional(TrimmedNonEmptyString),

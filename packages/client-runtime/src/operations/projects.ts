@@ -126,6 +126,22 @@ export function addProjectRemoteSourceProvider(
   return source === "url" ? null : source;
 }
 
+/**
+ * What to send to repository search for typed text, or null when nothing should be searched:
+ * the source has no search, the text is a URL, or one character is too broad to narrow anything.
+ */
+export function getAddProjectRepositorySearchQuery(
+  source: AddProjectRemoteSource,
+  input: string,
+): string | null {
+  if (source !== "github") return null;
+  const trimmed = input.trim();
+  if (trimmed.length < 2 || /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || trimmed.includes("@")) {
+    return null;
+  }
+  return trimmed;
+}
+
 const GITHUB_REPOSITORY_SHORTHAND =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
 

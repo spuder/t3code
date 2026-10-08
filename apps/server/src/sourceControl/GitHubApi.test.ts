@@ -284,6 +284,51 @@ describe("GitHubApi", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("holds back searches once the search quota is spent, without pausing the host", () => {
+    const reset = Math.floor(NOW / 1000) + 60;
+    const { layer, requests } = harness((request) =>
+      new URL(request.url).pathname.startsWith("/search/")
+        ? json(
+            { message: "API rate limit exceeded" },
+            {
+              status: 403,
+              headers: {
+                "x-ratelimit-resource": "search",
+                "x-ratelimit-limit": "30",
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": String(reset),
+              },
+            },
+          )
+        : json({ ok: true }),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const api = yield* GitHubApi.GitHubApi;
+      const search = {
+        host: "github.com",
+        operation: "searchRepositories",
+        path: "search/repositories?q=t3",
+        allowReserve: true,
+      };
+      expect(yield* Effect.flip(api.rest(search))).toMatchObject({
+        _tag: "GitHubApiRateLimitError",
+      });
+      expect(yield* Effect.flip(api.rest(search))).toMatchObject({
+        _tag: "SourceControlRateLimitPausedError",
+        retryAt: reset * 1000,
+      });
+      // A background read on `core` is not held back by the spent search quota.
+      const read = yield* api.rest({
+        host: "github.com",
+        operation: "sweep",
+        path: "repos/acme/web/pulls",
+      });
+      expect(read.status).toBe(200);
+      expect(requests).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("carries GitHub's own reason for a refused REST request", () => {
     const { layer } = harness(() =>
       json(

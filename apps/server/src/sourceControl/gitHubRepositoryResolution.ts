@@ -137,6 +137,29 @@ export function parseGitHubRepositorySelector(
 }
 
 /**
+ * The `q` for GitHub's repository search from what a user typed: `owner/` lists the owner's
+ * repositories, `owner/text` narrows them by name, and bare text matches names anywhere.
+ * Null for input that is not a search, such as a URL or `host/owner/name`.
+ */
+export function buildGitHubRepositorySearchQuery(input: string): string | null {
+  const trimmed = input.trim();
+  if (trimmed.length === 0 || /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || trimmed.includes("@")) {
+    return null;
+  }
+  const slash = trimmed.indexOf("/");
+  const text = (slash === -1 ? trimmed : trimmed.slice(slash + 1)).replace(/\.git$/i, "").trim();
+  if (text.includes("/")) return null;
+  // Text is matched against names only; a qualifier typed into it would change the search.
+  const terms = text.length === 0 ? null : `${text.replaceAll(":", " ")} in:name`;
+  if (slash === -1) return terms;
+  const owner = trimmed.slice(0, slash).trim();
+  // GitHub logins are letters, digits and hyphens; anything else cannot match an owner.
+  if (!/^[a-z0-9-]+$/i.test(owner)) return null;
+  // `user:` covers organizations as well as personal accounts.
+  return terms === null ? `user:${owner}` : `user:${owner} ${terms}`;
+}
+
+/**
  * A pull request reference the way `gh pr view` takes one: a number (`#7` too), a pull request
  * URL, or a branch name.
  */

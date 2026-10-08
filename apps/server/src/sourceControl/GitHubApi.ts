@@ -381,6 +381,8 @@ export const make = Effect.gen(function* () {
     readonly acceptNotModified: boolean;
     /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
     readonly graphql?: boolean;
+    /** REST paths under `search/` spend GitHub's small `search` quota instead of `core`. */
+    readonly search?: boolean;
   }) {
     const host = normalizeHost(input.host);
     // Only the path: a query string can carry a SHA or a branch, and never needs to be in a trace.
@@ -393,10 +395,11 @@ export const make = Effect.gen(function* () {
     });
     const { token, fingerprint } = yield* credential(host);
     const scope = yield* SourceControlRateLimit.CredentialScope;
-    // REST spends `core` and GraphQL its own quota, each with its own reserve. Every REST path
-    // this reads today is `core`; a `search/` read would need its own resource here. A refusal
-    // still pauses the whole host, the key PullRequestService records its own backoff under.
-    const resource = input.graphql === true ? "graphql" : "core";
+    // REST spends `core`, `search/` reads spend `search`, and GraphQL its own quota, each with
+    // its own reserve. A refusal pauses the whole host, the key PullRequestService records its
+    // own backoff under, except a spent `search` quota: it is tiny and refills each minute, so
+    // a user typing into repository search must not stall every other GitHub read.
+    const resource = input.graphql === true ? "graphql" : input.search === true ? "search" : "core";
     const key = { provider: "github" as const, host };
     const run = Effect.gen(function* () {
       const lease = yield* quota
@@ -477,7 +480,7 @@ export const make = Effect.gen(function* () {
           RateLimited: () =>
             Effect.gen(function* () {
               const retryAt = retryAtFrom(headers, yield* Clock.currentTimeMillis);
-              yield* limits.recordRateLimit({ ...key, lease, retryAt });
+              if (resource !== "search") yield* limits.recordRateLimit({ ...key, lease, retryAt });
               yield* Effect.annotateCurrentSpan({
                 "github.rate_limited": true,
                 ...(retryAt === undefined ? {} : { "github.retry_at": retryAt }),
@@ -533,6 +536,7 @@ export const make = Effect.gen(function* () {
           timeout: input.timeout,
           allowReserve: input.allowReserve ?? interactive,
           acceptNotModified: input.ifNoneMatch !== undefined,
+          search: /^\/*search\//.test(input.path),
         }),
       ),
     );

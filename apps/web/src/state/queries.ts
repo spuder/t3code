@@ -9,11 +9,17 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
+import {
+  addProjectRemoteSourceProvider,
+  getAddProjectRepositorySearchQuery,
+  type AddProjectRemoteSource,
+} from "@t3tools/client-runtime/operations/projects";
 import type {
   EnvironmentId,
   ProjectContentMatch,
   ProjectEntry,
   ProjectEntryKind,
+  SourceControlRepositorySearchItem,
   ThreadId,
   TurnItemId,
   VcsListRefsResult,
@@ -30,6 +36,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { sourceControlEnvironment } from "./sourceControl";
 import { vcsEnvironment } from "./vcs";
 
 const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
@@ -399,4 +406,41 @@ export function useTurnItemDetail(
           input: { threadId: target.threadId, itemId: target.itemId, revision: target.revision },
         }),
   );
+}
+
+const REPOSITORY_SEARCH_DEBOUNCE_MS = 250;
+const EMPTY_REPOSITORY_SEARCH_ITEMS: ReadonlyArray<SourceControlRepositorySearchItem> = [];
+
+/**
+ * Repositories matching what the user typed into a clone flow. The last results stay up while
+ * the next query is in flight, so the list does not blink empty on every keystroke.
+ */
+export function useRepositorySearch(target: {
+  readonly environmentId: EnvironmentId | null;
+  readonly source: AddProjectRemoteSource | null;
+  readonly query: string;
+}) {
+  const provider = target.source === null ? null : addProjectRemoteSourceProvider(target.source);
+  const searchQuery =
+    target.environmentId === null || target.source === null || provider === null
+      ? null
+      : getAddProjectRepositorySearchQuery(target.source, target.query);
+  const debouncedQuery = useDebouncedValue(searchQuery, REPOSITORY_SEARCH_DEBOUNCE_MS);
+  const settledQuery = searchQuery !== null && searchQuery === debouncedQuery ? searchQuery : null;
+  const result = useEnvironmentQuery(
+    settledQuery === null || target.environmentId === null || provider === null
+      ? null
+      : sourceControlEnvironment.searchRepositories({
+          environmentId: target.environmentId,
+          input: { provider, query: settledQuery },
+        }),
+  );
+  const latest = searchQuery === null ? EMPTY_REPOSITORY_SEARCH_ITEMS : result.data?.repositories;
+  const [repositories, setRepositories] = useState(EMPTY_REPOSITORY_SEARCH_ITEMS);
+  if (latest !== undefined && latest !== repositories) setRepositories(latest);
+  return {
+    repositories,
+    error: settledQuery === null ? null : result.error,
+    isPending: searchQuery !== null && (settledQuery === null || result.isPending),
+  };
 }

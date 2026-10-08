@@ -1,4 +1,10 @@
-import * as Context from "effect/Context";
+    .map((item) => ({
+      ...repositoryCloneUrls(item),
+      description: item.description?.trim() || null,
+      stars: item.stargazers_count,
+      isPrivate: item.private,
+      isFork: item.fork,
+    }));import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -16,6 +22,7 @@ import {
   type GitHubSettings,
   type SourceControlProviderDiscoveryItem,
   type SourceControlRepositoryCloneUrls,
+  type SourceControlRepositorySearchItem,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -30,6 +37,7 @@ import {
   type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
 import {
+  buildGitHubRepositorySearchQuery,
   parseFetchRemotes,
   parseGitHubRepositorySelector,
   parsePullRequestReference,
@@ -323,6 +331,38 @@ function repositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawRepositorySchema>,
 ): SourceControlRepositoryCloneUrls {
   return { nameWithOwner: raw.full_name, url: raw.html_url, sshUrl: raw.ssh_url };
+}
+
+const RawRepositorySearchSchema = Schema.Struct({
+  items: Schema.Array(
+    Schema.Struct({
+      ...RawRepositorySchema.fields,
+      description: Schema.optional(Schema.NullOr(Schema.String)),
+      stargazers_count: Schema.Number,
+      private: Schema.Boolean,
+      fork: Schema.Boolean,
+    }),
+  ),
+});
+const decodeRawRepositorySearch = decodeJsonResult(RawRepositorySearchSchema);
+
+/** Most starred first, except that a typed `owner/name` always leads with that repository. */
+function repositorySearchItems(
+  raw: Schema.Schema.Type<typeof RawRepositorySearchSchema>,
+  query: string,
+): ReadonlyArray<Omit<SourceControlRepositorySearchItem, "provider">> {
+  const exact = query.trim().replace(/\.git$/i, "").toLowerCase();
+  const isExact = (item: { readonly full_name: string }) =>
+    item.full_name.toLowerCase() === exact ? 0 : 1;
+  return raw.items
+    .toSorted((left, right) => isExact(left) - isExact(right))
+    .map((item) => ({
+      ...repositoryCloneUrls(item),
+      description: item.description?.trim() || null,
+      stars: item.stargazers_count,
+      isPrivate: item.private,
+      isFork: item.fork,
+    }));
 }
 
 const decodeViewerLogin = decodeJsonResult(Schema.Struct({ login: TrimmedNonEmptyString }));
@@ -967,6 +1007,32 @@ export const make = Effect.gen(function* () {
           providerError("createChangeRequest", input.cwd, { reference: input.headSelector }),
         ),
       ),
+    searchRepositories: (input) =>
+      Effect.gen(function* () {
+        const q = buildGitHubRepositorySearchQuery(input.query);
+        if (q === null) return [];
+        const host = (yield* resolveRepository({ cwd: input.cwd }).pipe(
+          Effect.map((locator) => locator.host),
+          Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
+        )).toLowerCase();
+        const params = new URLSearchParams({
+          q,
+          sort: "stars",
+          order: "desc",
+          per_page: String(input.limit),
+        });
+        const response = yield* rest({
+          host,
+          operation: "searchRepositories",
+          path: `search/repositories?${params.toString()}`,
+          allowReserve: true,
+        });
+        const decoded = decodeRawRepositorySearch(response.body);
+        if (Result.isFailure(decoded)) {
+          return yield* failure("GitHub returned invalid search results.", decoded.failure);
+        }
+        return repositorySearchItems(decoded.success, input.query);
+      }).pipe(Effect.mapError(providerError("searchRepositories", input.cwd))),
     getRepositoryCloneUrls: (input) =>
       Effect.gen(function* () {
         const fallbackHost = (yield* resolveRepository({ cwd: input.cwd }).pipe(

@@ -124,6 +124,43 @@ it.effect("looks up repositories through the requested provider without search",
   }).pipe(Effect.provide(layer({ provider })));
 });
 
+it.effect("tags search results with the provider, and finds none without search", () => {
+  const calls: Array<{ cwd: string; query: string; limit: number }> = [];
+  const searchItem = {
+    ...CLONE_URLS,
+    description: null,
+    stars: 7,
+    isPrivate: false,
+    isFork: false,
+  };
+  const provider = makeProvider({
+    searchRepositories: (input) =>
+      Effect.sync(() => {
+        calls.push(input);
+        return [searchItem];
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const searching = yield* SourceControlRepositoryService.SourceControlRepositoryService.pipe(
+      Effect.provide(layer({ provider })),
+    );
+    assert.deepStrictEqual(
+      yield* searching.searchRepositories({ provider: "github", query: " t3 ", cwd: "/workspace" }),
+      { repositories: [{ provider: "github", ...searchItem }] },
+    );
+    assert.deepStrictEqual(calls, [{ cwd: "/workspace", query: "t3", limit: 20 }]);
+
+    const lookupOnly = yield* SourceControlRepositoryService.SourceControlRepositoryService.pipe(
+      Effect.provide(layer({ provider: makeProvider() })),
+    );
+    assert.deepStrictEqual(
+      yield* lookupOnly.searchRepositories({ provider: "gitlab", query: "t3" }),
+      { repositories: [] },
+    );
+  });
+});
+
 it.effect("preserves provider failures without deriving the repository message from them", () => {
   const providerCause = new SourceControlProviderError({
     provider: "github",

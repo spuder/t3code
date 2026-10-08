@@ -47,6 +47,8 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   ProjectId,
+  type SourceControlRepositoryInfo,
+  type SourceControlRepositorySearchItem,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
@@ -63,6 +65,7 @@ import { useProjects, useServerConfigs, waitForProject } from "../../state/entit
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { useRepositorySearch } from "../../state/queries";
 import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { sourceControlEnvironment } from "../../state/sourceControl";
@@ -767,6 +770,22 @@ function useCreateProject(environment: EnvironmentOption | null) {
   );
 }
 
+const STAR_COUNT_FORMAT = new Intl.NumberFormat(undefined, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+function repositorySearchSubtitle(repository: SourceControlRepositorySearchItem): string {
+  return [
+    `★ ${STAR_COUNT_FORMAT.format(repository.stars)}`,
+    repository.isPrivate ? "Private" : null,
+    repository.isFork ? "Fork" : null,
+    repository.description,
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+}
+
 function useEnvironmentFromParam(
   environmentIdParam: string | string[] | undefined,
 ): EnvironmentOption | null {
@@ -788,6 +807,29 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Only provider sources search, so results always come with a provider to draw.
+  const searchProvider = addProjectRemoteSourceProvider(source);
+  const repositorySearch = useRepositorySearch({
+    environmentId: environment?.environmentId ?? null,
+    source,
+    query: repositoryInput,
+  });
+
+  const openDestination = useCallback(
+    (repository: SourceControlRepositoryInfo) => {
+      if (!environment) return;
+      navigation.dispatch(
+        StackActions.push("AddProjectDestination", {
+          environmentId: environment.environmentId,
+          source,
+          remoteUrl: getDefaultCloneUrl(repository),
+          repositoryTitle: repository.nameWithOwner,
+          repositoryName: getCloneDirectoryName(repository.nameWithOwner),
+        }),
+      );
+    },
+    [environment, navigation, source],
+  );
 
   const lookupRepository = useCallback(async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
@@ -819,19 +861,18 @@ export function AddProjectRepositoryScreen(props: {
     if (AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     } else {
-      const repository = result.value;
-      navigation.dispatch(
-        StackActions.push("AddProjectDestination", {
-          environmentId: environment.environmentId,
-          source,
-          remoteUrl: getDefaultCloneUrl(repository),
-          repositoryTitle: repository.nameWithOwner,
-          repositoryName: getCloneDirectoryName(repository.nameWithOwner),
-        }),
-      );
+      openDestination(result.value);
     }
     setIsSubmitting(false);
-  }, [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
+  }, [
+    environment,
+    isSubmitting,
+    lookupRepositoryQuery,
+    openDestination,
+    repositoryInput,
+    navigation,
+    source,
+  ]);
 
   return (
     <AddProjectShell title={source === "url" ? "Git URL" : addProjectRemoteSourceLabel(source)}>
@@ -847,7 +888,9 @@ export function AddProjectRepositoryScreen(props: {
             placeholder={
               source === "url"
                 ? "https://github.com/org/repo.git"
-                : addProjectRemoteSourcePathHint(source)
+                : source === "github"
+                  ? "Search, or enter owner/repo"
+                  : addProjectRemoteSourcePathHint(source)
             }
             returnKeyType="next"
             onSubmitEditing={() => void lookupRepository()}
@@ -858,6 +901,39 @@ export function AddProjectRepositoryScreen(props: {
             onPress={() => void lookupRepository()}
             loading={isSubmitting}
           />
+          {repositorySearch.error ? <ErrorBanner message={repositorySearch.error} /> : null}
+          {repositorySearch.repositories.length > 0 || repositorySearch.isPending ? (
+            <>
+              <SectionTitle>Repositories</SectionTitle>
+              <ListSection>
+                {repositorySearch.isPending && repositorySearch.repositories.length === 0 ? (
+                  <View className="items-center py-5">
+                    <ActivityIndicator colorClassName="accent-icon-muted" />
+                  </View>
+                ) : null}
+                {repositorySearch.repositories.map((repository, index) => (
+                  <ListRow
+                    key={repository.nameWithOwner}
+                    title={repository.nameWithOwner}
+                    subtitle={repositorySearchSubtitle(repository)}
+                    icon={
+                      <SourceControlIcon
+                        kind={searchProvider ?? "github"}
+                        size={Platform.OS === "android" ? 24 : 18}
+                        colorClassName="accent-icon"
+                      />
+                    }
+                    isFirst={index === 0}
+                    disabled={isSubmitting}
+                    onPress={() => {
+                      const { provider, nameWithOwner, url, sshUrl } = repository;
+                      openDestination({ provider, nameWithOwner, url, sshUrl });
+                    }}
+                  />
+                ))}
+              </ListSection>
+            </>
+          ) : null}
         </>
       ) : (
         <EmptyEnvironmentState />

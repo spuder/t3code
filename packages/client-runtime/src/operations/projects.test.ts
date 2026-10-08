@@ -13,6 +13,7 @@ import {
   canCreateProjectInEnvironment,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  getAddProjectRepositorySearchQuery,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
@@ -46,6 +47,15 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("owner/repo/")).toBe("repo");
     expect(getCloneDirectoryName("")).toBe("");
     expect(getCloneDirectoryName(null)).toBe("");
+  });
+
+  it("searches GitHub for names and owners but not for URLs", () => {
+    expect(getAddProjectRepositorySearchQuery("github", " t3 ")).toBe("t3");
+    expect(getAddProjectRepositorySearchQuery("github", "spuder/")).toBe("spuder/");
+    expect(getAddProjectRepositorySearchQuery("github", "t")).toBeNull();
+    expect(getAddProjectRepositorySearchQuery("github", "https://github.com/a/b")).toBeNull();
+    expect(getAddProjectRepositorySearchQuery("github", "git@github.com:a/b.git")).toBeNull();
+    expect(getAddProjectRepositorySearchQuery("gitlab", "t3")).toBeNull();
   });
 
   it("routes owner/repository shorthand to GitHub over HTTPS", () => {

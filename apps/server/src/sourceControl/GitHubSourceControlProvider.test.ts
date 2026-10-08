@@ -506,6 +506,73 @@ describe("GitHubSourceControlProvider writes", () => {
   });
 });
 
+describe("GitHubSourceControlProvider.searchRepositories", () => {
+  const item = (fullName: string, stars: number) => ({
+    full_name: fullName,
+    html_url: `https://github.com/${fullName}`,
+    ssh_url: `git@github.com:${fullName}.git`,
+    description: stars > 10 ? ` ${fullName} description ` : null,
+    stargazers_count: stars,
+    private: false,
+    fork: fullName.startsWith("me/"),
+  });
+
+  it.effect("searches by stars and leads with a typed owner/name", () => {
+    const paths: string[] = [];
+    const { layer } = harness({
+      remotes: "",
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            paths.push(`${input.host} ${input.path}`);
+            return restResponse({
+              items: [item("acme/web-kit", 900), item("acme/web", 40), item("me/web", 3)],
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const results = yield* gh.searchRepositories!({
+        cwd: "/repo",
+        query: "acme/web",
+        limit: 20,
+      });
+      assert.deepStrictEqual(paths, [
+        "github.com search/repositories?q=user%3Aacme+web+in%3Aname&sort=stars&order=desc&per_page=20",
+      ]);
+      assert.deepStrictEqual(
+        results.map((result) => result.nameWithOwner),
+        ["acme/web", "acme/web-kit", "me/web"],
+      );
+      assert.deepStrictEqual(results[0], {
+        nameWithOwner: "acme/web",
+        url: "https://github.com/acme/web",
+        sshUrl: "git@github.com:acme/web.git",
+        description: "acme/web description",
+        stars: 40,
+        isPrivate: false,
+        isFork: false,
+      });
+      assert.strictEqual(results[2]?.description, null);
+      assert.strictEqual(results[2]?.isFork, true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not call GitHub for input that is not a search", () => {
+    const { layer } = harness({ remotes: "", api: {} });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const results = yield* gh.searchRepositories!({
+        cwd: "/repo",
+        query: "https://github.com/acme/web",
+        limit: 20,
+      });
+      assert.deepStrictEqual(results, []);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
 describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
   const repository = (fullName: string, defaultBranch = "main") =>
     restResponse({

@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  buildGitHubRepositorySearchQuery,
   gitHubApiHostForRemote,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
@@ -83,5 +84,31 @@ describe("gitHubApiHostForRemote", () => {
       "github.example.com",
     );
     assert.strictEqual(gitHubApiHostForRemote("git@gitlab.com:a/b.git"), null);
+  });
+});
+
+describe("buildGitHubRepositorySearchQuery", () => {
+  it("lists an owner's repositories, narrowed by any name typed after the slash", () => {
+    assert.strictEqual(buildGitHubRepositorySearchQuery("spuder/"), "user:spuder");
+    assert.strictEqual(buildGitHubRepositorySearchQuery(" spuder/doc "), "user:spuder doc in:name");
+    assert.strictEqual(
+      buildGitHubRepositorySearchQuery("pingdotgg/t3code.git"),
+      "user:pingdotgg t3code in:name",
+    );
+  });
+
+  it("matches bare text against names anywhere", () => {
+    assert.strictEqual(buildGitHubRepositorySearchQuery("t3"), "t3 in:name");
+    // A typed qualifier stays part of the name text.
+    assert.strictEqual(buildGitHubRepositorySearchQuery("is:private"), "is private in:name");
+  });
+
+  it("does not search URLs, deeper paths, or owners GitHub cannot have", () => {
+    assert.isNull(buildGitHubRepositorySearchQuery(""));
+    assert.isNull(buildGitHubRepositorySearchQuery("https://github.com/acme/web"));
+    assert.isNull(buildGitHubRepositorySearchQuery("git@github.com:acme/web.git"));
+    assert.isNull(buildGitHubRepositorySearchQuery("ghe.example.com/acme/web"));
+    assert.isNull(buildGitHubRepositorySearchQuery("ac me/web"));
+    assert.isNull(buildGitHubRepositorySearchQuery("acme user:other/web"));
   });
 });
